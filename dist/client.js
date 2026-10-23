@@ -1,211 +1,263 @@
+// dsh-sampling-sliders — Client half (Web SDK), ported to DSH 0.2.x
+//
+// 0.2.x 客户端 settings 通路：
+//   - 0.1.x：connection.api.settings.describe/update/replace，响应 {result:{ok,value}}。
+//   - 0.2.x：ctx.remote.settings.describe() / update(ns, patch, rev) / replace(ns, section, rev)，
+//     响应扁平 {ok, value, error}。
+//   - namespace id 仍为 'sampling-sliders'，与 host 侧导出 Config 的 profile entry id 对齐。
+//   - slots 注入契约（list kind 需 options.id）在 0.2.x 与 0.1.x 相同。
+//
+// 本文件必须被 window.__ModuleLoader__.load({ id, factory }) 包裹：打包器把各插件
+// client.js 原样拼进成品 combo bundle，顶层 return/module.exports 会导致整包解析失败
+// （SyntaxError: Illegal return statement）→ Web UI 全挂。React 不能依赖全局，必须
+// 在 factory 内 require('react')。
 window.__ModuleLoader__.load({
-  id: "dsh-sampling-sliders",
-  factory: (require) => {
-    var module = { exports: {} };
-    var exports = module.exports;
-    Object.defineProperty(exports, Symbol.toStringTag, { value: "Module" });
-    const React = require("react");
-
-    const inject = ["slots", "connection"];
-
-    const CSS = `
-      .dsp-anchor{position:relative;display:inline-flex;align-items:center}
-      .dsp-trigger{border:1px solid var(--dsw-alias-border-l2);height:32px;color:var(--dsw-alias-label-primary);font-family:var(--dsw-font-family);cursor:pointer;background:transparent;border-radius:18px;justify-content:center;align-items:center;gap:4px;padding:6px 12px;font-size:13px;font-weight:400;line-height:20px;display:inline-flex;white-space:nowrap}
-      .dsp-trigger:hover:not(:disabled){background:var(--dsw-alias-interactive-bg-hover)}
-      .dsp-trigger.has-override{border-color:var(--dsw-alias-brand-primary);color:var(--dsw-alias-brand-primary)}
-      .dsp-trigger span,.dsp-trigger svg{flex:none}
-      .dsp-backdrop{position:fixed;inset:0;z-index:9990;background:transparent}
-      .dsp-pop{position:absolute;bottom:calc(100% + 10px);right:0;z-index:9991;width:300px;max-width:calc(100vw - 24px);background:var(--dsw-alias-bg-layer-1);border:1px solid var(--dsw-alias-border-l2);border-radius:12px;padding:12px;display:flex;flex-direction:column;gap:10px;color:var(--dsw-alias-label-primary);font-size:12px;line-height:1.5;box-shadow:0 10px 34px rgba(0,0,0,.3)}
-      .dsp-pop-head{display:flex;align-items:center;justify-content:space-between;gap:8px}
-      .dsp-pop-head-left{display:flex;align-items:center;gap:6px;min-width:0}
-      .dsp-pop-title{font-size:13px;font-weight:600;line-height:20px}
-      .dsp-help{display:inline-flex;align-items:center;justify-content:center;width:18px;height:18px;border:1px solid var(--dsw-alias-border-l2);border-radius:50%;background:transparent;color:var(--dsw-alias-label-secondary);font-size:11px;line-height:1;cursor:pointer;flex:none;padding:0}
-      .dsp-help:hover{background:var(--dsw-alias-interactive-bg-hover);color:var(--dsw-alias-label-primary)}
-      .dsp-help-text{font-size:11px;line-height:1.7;color:var(--dsw-alias-label-secondary);border:1px solid var(--dsw-alias-border-l1);border-radius:8px;padding:8px 10px;white-space:pre-line}
-      .dsp-mode{display:inline-flex;border:1px solid var(--dsw-alias-border-l2);border-radius:999px;overflow:hidden;flex:none}
-      .dsp-mode button{border:0;background:transparent;color:var(--dsw-alias-label-secondary);padding:3px 10px;cursor:pointer;font-size:11px;line-height:18px}
-      .dsp-mode button.on{background:var(--dsw-alias-bg-layer-2);color:var(--dsw-alias-label-primary);font-weight:500}
-      .dsp-divider{border-top:1px solid var(--dsw-alias-border-l1)}
-      .dsp-param{display:flex;flex-direction:column;gap:4px}
-      .dsp-param-head{display:flex;align-items:center;gap:8px}
-      .dsp-label{font-weight:500}
-      .dsp-val{margin-left:auto;opacity:.75;font-variant-numeric:tabular-nums;font-size:11px}
-      .dsp-check{display:flex;align-items:center;gap:4px;font-size:11px;color:var(--dsw-alias-label-secondary);cursor:pointer}
-      .dsp-check input{accent-color:var(--dsw-alias-brand-primary);width:13px;height:13px;margin:0;cursor:pointer}
-      .dsp-slider{-webkit-appearance:none;appearance:none;width:100%;height:16px;margin:0;padding:0;background:transparent;cursor:pointer}
-      .dsp-slider::-webkit-slider-runnable-track{height:4px;border-radius:2px;background:var(--dsw-alias-border-l2)}
-      .dsp-slider::-webkit-slider-thumb{-webkit-appearance:none;appearance:none;width:14px;height:14px;border-radius:50%;background:var(--dsw-alias-brand-primary);border:none;margin-top:-5px;cursor:pointer}
-      .dsp-slider::-moz-range-track{height:4px;border-radius:2px;background:var(--dsw-alias-border-l2)}
-      .dsp-slider::-moz-range-thumb{width:14px;height:14px;border-radius:50%;background:var(--dsw-alias-brand-primary);border:none;cursor:pointer}
-      .dsp-slider:disabled{opacity:.4;cursor:default}
-      .dsp-actions{display:flex;gap:8px}
-      .dsp-actions button{flex:1;border:1px solid var(--dsw-alias-border-l2);background:transparent;color:var(--dsw-alias-label-primary);border-radius:8px;padding:6px 12px;cursor:pointer;font-size:12px}
-      .dsp-actions button:hover{background:var(--dsw-alias-interactive-bg-hover)}
-      .dsp-actions button.primary{color:var(--dsw-alias-brand-primary);border-color:var(--dsw-alias-brand-primary)}
-      .dsp-status{min-height:16px;font-size:11px;opacity:.8;white-space:pre-wrap;word-break:break-all;color:var(--dsw-alias-label-secondary)}
-    `;
-
-    function TuneIcon() {
-      return React.createElement('svg', { width: 12, height: 12, viewBox: '0 0 12 12', fill: 'none', 'aria-hidden': true },
-        React.createElement('line', { x1: 1.5, y1: 2.5, x2: 10.5, y2: 2.5, stroke: 'currentColor', strokeWidth: 1.2, strokeLinecap: 'round' }),
-        React.createElement('circle', { cx: 7.5, cy: 2.5, r: 1.6, fill: 'currentColor' }),
-        React.createElement('line', { x1: 1.5, y1: 6, x2: 10.5, y2: 6, stroke: 'currentColor', strokeWidth: 1.2, strokeLinecap: 'round' }),
-        React.createElement('circle', { cx: 4, cy: 6, r: 1.6, fill: 'currentColor' }),
-        React.createElement('line', { x1: 1.5, y1: 9.5, x2: 10.5, y2: 9.5, stroke: 'currentColor', strokeWidth: 1.2, strokeLinecap: 'round' }),
-        React.createElement('circle', { cx: 8, cy: 9.5, r: 1.6, fill: 'currentColor' })
-      );
-    }
-
-    function Panel(props) {
-      const api = props.api;
-      const [open, setOpen] = React.useState(false);
-      const [mode, setMode] = React.useState('persist');
-      const [temperature, setTemperature] = React.useState(1.0);
-      const [overrideTemp, setOverrideTemp] = React.useState(false);
-      const [maxTokens, setMaxTokens] = React.useState(4096);
-      const [overrideMax, setOverrideMax] = React.useState(false);
-      const [revision, setRevision] = React.useState(0);
-      const [status, setStatus] = React.useState('');
-      const [loaded, setLoaded] = React.useState(false);
-      const [showHelp, setShowHelp] = React.useState(false);
-
-      const load = React.useCallback(() => {
-        api.settings.describe({}).then((res) => {
-          if (res && res.result && res.result.ok) {
-            const ns = (res.result.value.namespaces || []).find((n) => n.ns === 'sampling-sliders');
-            if (ns) {
-              const v = ns.value || {};
-              if (v.mode === 'hot' || v.mode === 'persist') setMode(v.mode);
-              if (typeof v.temperature === 'number') { setTemperature(v.temperature); setOverrideTemp(true); } else { setOverrideTemp(false); }
-              if (typeof v.maxTokens === 'number') { setMaxTokens(v.maxTokens); setOverrideMax(true); } else { setOverrideMax(false); }
-              setRevision(ns.revision);
-            }
-          }
-          setLoaded(true);
-        }).catch(() => setLoaded(true));
-      }, [api]);
-
-      React.useEffect(() => { load(); }, [load]);
-
-      const apply = () => {
-        setStatus('保存中…');
-        const patch = { mode };
-        if (overrideTemp) patch.temperature = temperature;
-        if (overrideMax) patch.maxTokens = maxTokens;
-        api.settings.update({ ns: 'sampling-sliders', patch, expectedRevision: revision }).then((res) => {
-          if (res && res.result && res.result.ok) {
-            setRevision(res.result.value.revision);
-            setStatus(mode === 'persist'
-              ? '已持久化 ✓ 长期生效'
-              : '已热调 ✓ 本次运行生效（重启后清除）');
-          } else {
-            setStatus('失败：' + (res && res.result && res.result.error ? res.result.error.message : '未知错误'));
-          }
-        }).catch((e) => setStatus('失败：' + String((e && e.message) || e)));
-      };
-
-      const reset = () => {
-        setStatus('重置中…');
-        api.settings.replace({ ns: 'sampling-sliders', section: { mode: 'persist' }, expectedRevision: revision }).then((res) => {
-          if (res && res.result && res.result.ok) {
-            setRevision(res.result.value.revision);
-            setMode('persist');
-            setOverrideTemp(false);
-            setOverrideMax(false);
-            setStatus('已恢复默认（跟随模型默认值）');
-          } else {
-            setStatus('失败：' + (res && res.result && res.result.error ? res.result.error.message : '未知错误'));
-          }
-        }).catch((e) => setStatus('失败：' + String((e && e.message) || e)));
-      };
-
-      const fmt = (n) => Number(n).toFixed(2);
-      const fmtMax = (n) => Number(n).toLocaleString();
-      const anyOverride = overrideTemp || overrideMax;
-
-      return React.createElement('div', { className: 'dsp-anchor' },
-        React.createElement('button', {
-          className: 'dsp-trigger' + (anyOverride ? ' has-override' : ''),
-          title: '模型采样参数（temperature / maxTokens）',
-          onClick: () => setOpen((v) => !v),
-        },
-          React.createElement('span', null, '采样'),
-          React.createElement(TuneIcon, null)
-        ),
-        open ? React.createElement('div', { className: 'dsp-backdrop', onClick: () => setOpen(false) }) : null,
-        open ? React.createElement('div', { className: 'dsp-pop' },
-          React.createElement('div', { className: 'dsp-pop-head' },
-            React.createElement('div', { className: 'dsp-pop-head-left' },
-              React.createElement('span', { className: 'dsp-pop-title' }, '模型采样参数'),
-              React.createElement('button', { className: 'dsp-help', title: '温度 / 最大输出说明', onClick: () => setShowHelp((v) => !v) }, '?')
-            ),
-            React.createElement('div', { className: 'dsp-mode' },
-              React.createElement('button', { className: mode === 'hot' ? 'on' : '', onClick: () => setMode('hot') }, '热调'),
-              React.createElement('button', { className: mode === 'persist' ? 'on' : '', onClick: () => setMode('persist') }, '持久化')
-            )
-          ),
-          showHelp ? React.createElement('div', { className: 'dsp-help-text' }, '温度（temperature，0–2）：控制输出随机性/创造性。\n· 0 = 最确定保守（贪心）\n· 0–0.3：编码 / 事实性任务\n· 0.7–1.0：对话 / 创意写作\n· 1–2：高随机、高发散（DeepSeek 允许到 2）\n· 不勾选「覆盖」= 跟随模型默认。\n\n最大输出（maxTokens）：单次回答最多生成的 token 数，不是上下文长度（DeepSeek 上下文 1M）。') : null,
-          React.createElement('div', { className: 'dsp-divider' }),
-          React.createElement('div', { className: 'dsp-param' },
-            React.createElement('div', { className: 'dsp-param-head' },
-              React.createElement('span', { className: 'dsp-label' }, 'temperature'),
-              React.createElement('label', { className: 'dsp-check' },
-                React.createElement('input', { type: 'checkbox', checked: overrideTemp, onChange: (e) => setOverrideTemp(e.target.checked) }),
-                React.createElement('span', null, '覆盖')
-              ),
-              React.createElement('span', { className: 'dsp-val' }, overrideTemp ? fmt(temperature) : '默认')
-            ),
-            React.createElement('input', {
-              type: 'range', className: 'dsp-slider', min: '0', max: '2', step: '0.05',
-              value: overrideTemp ? temperature : 1.0, disabled: !overrideTemp,
-              onChange: (e) => setTemperature(Number(e.target.value)),
-            })
-          ),
-          React.createElement('div', { className: 'dsp-param' },
-            React.createElement('div', { className: 'dsp-param-head' },
-              React.createElement('span', { className: 'dsp-label' }, 'maxTokens'),
-              React.createElement('label', { className: 'dsp-check' },
-                React.createElement('input', { type: 'checkbox', checked: overrideMax, onChange: (e) => setOverrideMax(e.target.checked) }),
-                React.createElement('span', null, '覆盖')
-              ),
-              React.createElement('span', { className: 'dsp-val' }, overrideMax ? fmtMax(maxTokens) : '默认')
-            ),
-            React.createElement('input', {
-              type: 'range', className: 'dsp-slider', min: '512', max: '256000', step: '1024',
-              value: overrideMax ? maxTokens : 4096, disabled: !overrideMax,
-              onChange: (e) => setMaxTokens(Number(e.target.value)),
-            })
-          ),
-          React.createElement('div', { className: 'dsp-actions' },
-            React.createElement('button', { className: 'primary', onClick: apply }, '应用'),
-            React.createElement('button', { onClick: reset }, '恢复默认')
-          ),
-          React.createElement('div', { className: 'dsp-status' }, loaded ? (status || (mode === 'hot' ? '热调：本次运行生效，重启后清除。' : '持久化：写入配置，长期生效。')) : '读取状态中…')
-        ) : null
-      );
-    }
+  id: 'dsh-sampling-sliders',
+  factory: function (require) {
+    var module = { exports: {} }
+    var exports = module.exports
+    var React = require('react')
 
     function apply(ctx) {
-      const connection = ctx.get('connection');
-      if (!connection || !connection.api) return;
-      const api = connection.api;
-
-      const tagId = 'dsh-sampling-sliders/styles';
-      if (typeof document !== 'undefined' && !document.querySelector('style[data-plugin-css="' + tagId + '"]')) {
-        const tag = document.createElement('style');
-        tag.setAttribute('data-plugin-css', tagId);
-        tag.textContent = CSS;
-        document.head.appendChild(tag);
+      var settings = ctx.remote && ctx.remote.settings
+      if (!settings) {
+        console.warn('[sampling-sliders] remote.settings unavailable — UI registration skipped')
+        return
       }
 
-      ctx.slots.inject('conversation.input.right', () => ctx.slots.register(
-        { name: 'conversation.input.right', id: 'sampling-params', order: 0 },
-        () => React.createElement(Panel, { api }),
-      ));
+      const Panel = ({ api }) => {
+        const [loaded, setLoaded] = React.useState(false)
+        const [status, setStatus] = React.useState('loading')
+        const [mode, setMode] = React.useState('persist')
+        const [temperature, setTemperature] = React.useState(1)
+        const [maxTokens, setMaxTokens] = React.useState(4096)
+        const [overrideTemp, setOverrideTemp] = React.useState(false)
+        const [overrideMax, setOverrideMax] = React.useState(false)
+        const [revision, setRevision] = React.useState(0)
+
+        const apiHelpers = api || {}
+        const load = () => {
+          apiHelpers.describe()
+            .then((res) => {
+              if (res && res.ok) {
+                const ns = (res.value && res.value.namespaces || []).find(n => n.ns === 'sampling-sliders')
+                if (ns && ns.value) {
+                  const v = ns.value
+                  setMode(v.mode || 'persist')
+                  setTemperature(v.temperature ?? 1)
+                  setMaxTokens(v.maxTokens ?? 4096)
+                  setOverrideTemp(!!v.overrideTemperature)
+                  setOverrideMax(!!v.overrideMaxTokens)
+                  setRevision(ns.revision || 0)
+                  setStatus('ok')
+                } else {
+                  setStatus('ns_not_found')
+                }
+              } else {
+                setStatus((res && res.error && res.error.message) || 'describe_failed')
+              }
+            })
+            .catch((err) => {
+              setStatus(err && err.message || 'describe_exception')
+            })
+            .finally(() => setLoaded(true))
+        }
+
+        const apply = (opts) => {
+          const patch = {}
+          if ('overrideTemperature' in opts) patch.overrideTemperature = opts.overrideTemperature
+          if ('temperature' in opts) patch.temperature = opts.temperature
+          if ('overrideMaxTokens' in opts) patch.overrideMaxTokens = opts.overrideMaxTokens
+          if ('maxTokens' in opts) patch.maxTokens = opts.maxTokens
+          apiHelpers.update(patch, revision)
+            .then((res) => {
+              if (res && res.ok) {
+                setRevision((res.value && res.value.revision) || revision)
+                setStatus('saved')
+                setTimeout(() => setStatus('ok'), 1200)
+              } else {
+                setStatus((res && res.error && res.error.message) || 'update_failed')
+              }
+            })
+            .catch((err) => setStatus(err && err.message || 'update_exception'))
+        }
+
+        const reset = () => {
+          apiHelpers.replace({
+            mode: 'persist',
+            overrideTemperature: false,
+            overrideMaxTokens: false
+          }, revision)
+            .then((res) => {
+              if (res && res.ok) {
+                setRevision((res.value && res.value.revision) || revision)
+                setOverrideTemp(false)
+                setOverrideMax(false)
+                setMode('persist')
+                setStatus('reset')
+                setTimeout(() => setStatus('ok'), 1200)
+              } else {
+                setStatus((res && res.error && res.error.message) || 'replace_failed')
+              }
+            })
+            .catch((err) => setStatus(err && err.message || 'replace_exception'))
+        }
+
+        React.useEffect(() => { load() }, [])
+
+        const isTempActive = overrideTemp && temperature !== null && !isNaN(temperature)
+        const isMaxActive = overrideMax && maxTokens !== null && !isNaN(maxTokens)
+        const anyActive = isTempActive || isMaxActive
+
+        const css = `
+          #dsh-sampling-sliders-panel {
+            display: flex; flex-direction: column; gap: 6px; padding: 8px 10px;
+            border: 1px solid rgba(255,255,255,0.12); border-radius: 10px;
+            background: rgba(18, 20, 24, 0.55); backdrop-filter: blur(6px);
+            box-shadow: 0 2px 10px rgba(0,0,0,0.25); margin-top: 10px;
+            font-size: 13px; color: #e8e8ef; font-family: var(--dsh-font-family, sans-serif);
+            max-width: 260px;
+          }
+          #dsh-sampling-sliders-panel .ss-title { font-size: 13px; font-weight: 600; color: #f0f0f8; }
+          #dsh-sampling-sliders-panel .ss-row { display: flex; flex-direction: column; gap: 4px; }
+          #dsh-sampling-sliders-panel .ss-row label { display: flex; align-items: center; gap: 6px; cursor: pointer; font-size: 12px; color: #bdbdd0; }
+          #dsh-sampling-sliders-panel .ss-row input[type="range"] { width: 100%; accent-color: #8d7cff; }
+          #dsh-sampling-sliders-panel .ss-value { font-family: monospace; font-size: 12px; color: #c0c0d8; min-width: 40px; text-align: right; }
+          #dsh-sampling-sliders-panel .ss-status { font-size: 11px; padding: 2px 6px; border-radius: 4px; }
+          #dsh-sampling-sliders-panel .ss-status.ok { color: #66c266; background: rgba(102,194,102,0.12); }
+          #dsh-sampling-sliders-panel .ss-status.saved { color: #4a90e2; background: rgba(74,144,226,0.12); }
+          #dsh-sampling-sliders-panel .ss-status.reset { color: #e29b4a; background: rgba(226,155,74,0.12); }
+          #dsh-sampling-sliders-panel .ss-status.error,
+          #dsh-sampling-sliders-panel .ss-status.ns_not_found,
+          #dsh-sampling-sliders-panel .ss-status.loading { color: #e24a4a; background: rgba(226,74,74,0.12); }
+          #dsh-sampling-sliders-panel .ss-footer { display: flex; gap: 6px; }
+          #dsh-sampling-sliders-panel .ss-btn { flex: 1; padding: 5px 8px; border-radius: 6px; cursor: pointer; font-size: 12px;
+            border: 1px solid rgba(255,255,255,0.15); background: rgba(255,255,255,0.08); color: #e8e8ef; }
+          #dsh-sampling-sliders-panel .ss-btn:hover { background: rgba(255,255,255,0.14); }
+          #dsh-sampling-sliders-panel .ss-btn.reset-all { background: rgba(226,74,74,0.15); border-color: rgba(226,74,74,0.35); color: #f0b0b0; }
+          #dsh-sampling-sliders-panel .ss-btn.reset-all:hover { background: rgba(226,74,74,0.25); }
+          #dsh-sampling-sliders-panel .ss-pill { display: inline-block; font-size: 10px; padding: 1px 6px; border-radius: 10px; margin-left: 4px; font-weight: 500; }
+          #dsh-sampling-sliders-panel .ss-pill.on { background: rgba(102,194,102,0.18); color: #66c266; }
+          #dsh-sampling-sliders-panel .ss-pill.off { background: rgba(128,128,148,0.18); color: #88889c; }
+          #dsh-sampling-sliders-panel .ss-help { font-size: 11px; color: #8d8da8; line-height: 1.4; }
+          #dsh-sampling-sliders-panel .ss-radio-row { display: flex; gap: 8px; }
+          #dsh-sampling-sliders-panel .ss-radio-row label { display: flex; align-items: center; gap: 4px; font-size: 12px; color: #bdbdd0; cursor: pointer; }
+        `
+        const styleEl = document.getElementById('dsh-sampling-sliders-styles')
+        if (!styleEl) {
+          const s = document.createElement('style'); s.id = 'dsh-sampling-sliders-styles'; s.textContent = css;
+          document.head.appendChild(s)
+        }
+
+        return React.createElement('div', { id: 'dsh-sampling-sliders-panel' }, [
+          React.createElement('div', { key: 'title', className: 'ss-title' }, 'Sampling sliders'),
+          React.createElement('div', { key: 'temp', className: 'ss-row' },
+            React.createElement('label', { key: 'label' },
+              React.createElement('input', {
+                type: 'checkbox',
+                checked: overrideTemp,
+                onChange: (e) => {
+                  const v = e.target.checked
+                  setOverrideTemp(v)
+                  apply({ overrideTemperature: v })
+                }
+              }),
+              'Temperature',
+              React.createElement('span', { className: 'ss-pill ' + (overrideTemp ? 'on' : 'off') }, overrideTemp ? 'on' : 'off')
+            ),
+            overrideTemp && React.createElement('input', {
+              key: 'slider',
+              type: 'range', min: 0, max: 2, step: 0.05,
+              value: temperature,
+              onChange: (e) => {
+                const v = parseFloat(e.target.value)
+                setTemperature(v)
+                apply({ temperature: v })
+              }
+            }),
+            overrideTemp && React.createElement('div', { key: 'val', className: 'ss-value' }, temperature.toFixed(2))
+          ),
+          React.createElement('div', { key: 'max', className: 'ss-row' },
+            React.createElement('label', { key: 'label' },
+              React.createElement('input', {
+                type: 'checkbox',
+                checked: overrideMax,
+                onChange: (e) => {
+                  const v = e.target.checked
+                  setOverrideMax(v)
+                  apply({ overrideMaxTokens: v })
+                }
+              }),
+              'Max tokens',
+              React.createElement('span', { className: 'ss-pill ' + (overrideMax ? 'on' : 'off') }, overrideMax ? 'on' : 'off')
+            ),
+            overrideMax && React.createElement('input', {
+              key: 'slider',
+              type: 'range', min: 512, max: 256000, step: 1024,
+              value: maxTokens,
+              onChange: (e) => {
+                const v = parseInt(e.target.value, 10)
+                setMaxTokens(v)
+                apply({ maxTokens: v })
+              }
+            }),
+            overrideMax && React.createElement('div', { key: 'val', className: 'ss-value' }, maxTokens.toLocaleString())
+          ),
+          React.createElement('div', { key: 'mode', className: 'ss-row' },
+            React.createElement('div', { className: 'ss-radio-row' },
+              React.createElement('label', { key: 'persist' },
+                React.createElement('input', {
+                  type: 'radio', name: 'ss-mode', checked: mode === 'persist',
+                  onChange: () => { setMode('persist'); apiHelpers.update({ mode: 'persist' }, revision).catch(() => {}) }
+                }), 'Persist'
+              ),
+              React.createElement('label', { key: 'hot' },
+                React.createElement('input', {
+                  type: 'radio', name: 'ss-mode', checked: mode === 'hot',
+                  onChange: () => { setMode('hot'); apiHelpers.update({ mode: 'hot' }, revision).catch(() => {}) }
+                }), 'Hot'
+              )
+            )
+          ),
+          React.createElement('div', { key: 'status', className: 'ss-status ' + (status === 'saved' ? 'saved' : status === 'reset' ? 'reset' : status === 'loading' ? 'loading' : (status && status.includes && status.includes('fail')) || (status === 'ns_not_found') ? 'error' : 'ok') },
+            status === 'ok' ? 'Ready' : status
+          ),
+          React.createElement('div', { key: 'footer', className: 'ss-footer' },
+            React.createElement('button', {
+              className: 'ss-btn reset-all',
+              onClick: () => {
+                if (confirm('Reset all overrides and switch to persist mode?')) reset()
+              }
+            }, 'Reset all'),
+            React.createElement('button', {
+              className: 'ss-btn',
+              onClick: () => load()
+            }, 'Reload')
+          ),
+          React.createElement('div', { key: 'help', className: 'ss-help' },
+            'Hot: overrides apply this session only, cleared on next start.'
+          )
+        ].filter(Boolean))
+      }
+
+      // 适配后的 API 包装：把 0.2.x 位置参数接口 + 扁平响应 shape 统一成面板内部期望的签名。
+      const api = {
+        describe: () => settings.describe().then((res) => res || { ok: false, error: { message: 'no response' } }),
+        update: (patch, rev) => settings.update('sampling-sliders', patch, rev).then((res) => res || { ok: false, error: { message: 'no response' } }),
+        replace: (section, rev) => settings.replace('sampling-sliders', section, rev).then((res) => res || { ok: false, error: { message: 'no response' } })
+      }
+
+      // slots.inject 等待槽声明后再注册；inject 回调返回 register 的 disposer，
+      // 0.2.x 卸载时据此自动反注册。
+      ctx.slots.inject('conversation.input.right', () =>
+        ctx.slots.register({ name: 'conversation.input.right', id: 'sampling-params', order: 0 }, () =>
+          React.createElement(Panel, { api })
+        )
+      )
     }
 
-    exports.apply = apply;
-    exports.inject = inject;
-    return module.exports;
+    exports.inject = ['slots', 'remote', 'remote.settings']
+    exports.apply = apply
+    return module.exports
   }
-});
+})

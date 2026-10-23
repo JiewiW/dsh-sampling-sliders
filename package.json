@@ -1,8 +1,7 @@
 {
   "name": "dsh-sampling-sliders",
-  "version": "0.1.0",
-  "description": "DeepSeek Harness plugin: model sampling sliders (temperature / maxTokens) applied to every provider via the agent/request hook, with live settings persistence.",
-  "license": "MIT",
+  "version": "0.2.0-adapted",
+  "description": "DSH conversation slot plugin exposing live temperature / maxTokens sliders. Adapted for DSH 0.2.0-rc.2.",
   "type": "module",
   "main": "./dist/index.js",
   "exports": {
@@ -12,41 +11,35 @@
   },
   "files": [
     "dist",
-    "cordis.patch.yml"
+    "cordis.patch.yml",
+    "README.md",
+    "LICENSE"
   ],
-  "dsh": {
-    "bundle": {
-      "patch": "./cordis.patch.yml"
-    },
-    "client": {
-      "inject": [
-        "@deepseek-ai/dsh-client-runtime",
-        "@deepseek-ai/dsh-client-connection",
-        "@deepseek-ai/dsh-client-ui-conversation"
-      ],
-      "platform": "web"
-    }
-  },
-  "scripts": {
-    "build": "tsc -p tsconfig.json",
-    "typecheck": "tsc -p tsconfig.json --noEmit"
-  },
   "dependencies": {
     "@deepseek-ai/schemastery": "^3.18.1"
   },
   "peerDependencies": {
     "@deepseek-ai/cordis": "^4.0.1",
-    "@deepseek-ai/dsh-client-connection": "^0.1.0-rc.6",
-    "@deepseek-ai/dsh-client-runtime": "^0.1.0-rc.6",
-    "@deepseek-ai/dsh-client-ui-conversation": "^0.1.0-rc.6",
+    "@deepseek-ai/dsh-client-connection": "^0.2.0-rc.2",
+    "@deepseek-ai/dsh-client-runtime": "^0.2.0-rc.2",
+    "@deepseek-ai/dsh-client-ui-conversation": "^0.2.0-rc.2",
     "react": "^18.2.0"
   },
-  "devDependencies": {
-    "@deepseek-ai/cordis": "^4.0.1",
-    "@deepseek-ai/dsh-session": "0.1.0-rc.6",
-    "@deepseek-ai/dsh-tools": "0.1.0-rc.6",
-    "@deepseek-ai/schemastery": "^3.18.1",
-    "@types/node": "^22.10.0",
-    "typescript": "^5.6.0"
-  }
+  "devDependencies": {},
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "platform": "web",
+      "inject": [
+        "@deepseek-ai/dsh-client-runtime",
+        "@deepseek-ai/dsh-client-ui-conversation",
+        "@deepseek-ai/dsh-client-ui-renderer",
+        "@deepseek-ai/dsh-api-gateway",
+        "@deepseek-ai/dsh-api-remotes"
+      ]
+    }
+  },
+  "license": "MIT"
 }
