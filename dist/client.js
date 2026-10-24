@@ -1,211 +1,349 @@
+// dsh-sampling-sliders — Client half (Web SDK), ported to DSH 0.2.x
+//
+// v0.4.0 hot 模式修复：
+//   - persist 模式：写入全局 settings namespace，所有会话共享 ✓
+//   - hot 模式：写入 Host 端 per-session 内存 Map（key=sessionId），仅当前会话生效
+//     会话切换/销毁时自动清除，不再污染其他会话
+//   - 客户端从 window.location 提取当前 sessionId，随 hot 请求一起发送
+
 window.__ModuleLoader__.load({
-  id: "dsh-sampling-sliders",
-  factory: (require) => {
-    var module = { exports: {} };
-    var exports = module.exports;
-    Object.defineProperty(exports, Symbol.toStringTag, { value: "Module" });
-    const React = require("react");
+  id: 'dsh-sampling-sliders',
+  factory: function (require) {
+    var module = { exports: {} }
+    var exports = module.exports
+    var React = require('react')
 
-    const inject = ["slots", "connection"];
-
-    const CSS = `
-      .dsp-anchor{position:relative;display:inline-flex;align-items:center}
-      .dsp-trigger{border:1px solid var(--dsw-alias-border-l2);height:32px;color:var(--dsw-alias-label-primary);font-family:var(--dsw-font-family);cursor:pointer;background:transparent;border-radius:18px;justify-content:center;align-items:center;gap:4px;padding:6px 12px;font-size:13px;font-weight:400;line-height:20px;display:inline-flex;white-space:nowrap}
-      .dsp-trigger:hover:not(:disabled){background:var(--dsw-alias-interactive-bg-hover)}
-      .dsp-trigger.has-override{border-color:var(--dsw-alias-brand-primary);color:var(--dsw-alias-brand-primary)}
-      .dsp-trigger span,.dsp-trigger svg{flex:none}
-      .dsp-backdrop{position:fixed;inset:0;z-index:9990;background:transparent}
-      .dsp-pop{position:absolute;bottom:calc(100% + 10px);right:0;z-index:9991;width:300px;max-width:calc(100vw - 24px);background:var(--dsw-alias-bg-layer-1);border:1px solid var(--dsw-alias-border-l2);border-radius:12px;padding:12px;display:flex;flex-direction:column;gap:10px;color:var(--dsw-alias-label-primary);font-size:12px;line-height:1.5;box-shadow:0 10px 34px rgba(0,0,0,.3)}
-      .dsp-pop-head{display:flex;align-items:center;justify-content:space-between;gap:8px}
-      .dsp-pop-head-left{display:flex;align-items:center;gap:6px;min-width:0}
-      .dsp-pop-title{font-size:13px;font-weight:600;line-height:20px}
-      .dsp-help{display:inline-flex;align-items:center;justify-content:center;width:18px;height:18px;border:1px solid var(--dsw-alias-border-l2);border-radius:50%;background:transparent;color:var(--dsw-alias-label-secondary);font-size:11px;line-height:1;cursor:pointer;flex:none;padding:0}
-      .dsp-help:hover{background:var(--dsw-alias-interactive-bg-hover);color:var(--dsw-alias-label-primary)}
-      .dsp-help-text{font-size:11px;line-height:1.7;color:var(--dsw-alias-label-secondary);border:1px solid var(--dsw-alias-border-l1);border-radius:8px;padding:8px 10px;white-space:pre-line}
-      .dsp-mode{display:inline-flex;border:1px solid var(--dsw-alias-border-l2);border-radius:999px;overflow:hidden;flex:none}
-      .dsp-mode button{border:0;background:transparent;color:var(--dsw-alias-label-secondary);padding:3px 10px;cursor:pointer;font-size:11px;line-height:18px}
-      .dsp-mode button.on{background:var(--dsw-alias-bg-layer-2);color:var(--dsw-alias-label-primary);font-weight:500}
-      .dsp-divider{border-top:1px solid var(--dsw-alias-border-l1)}
-      .dsp-param{display:flex;flex-direction:column;gap:4px}
-      .dsp-param-head{display:flex;align-items:center;gap:8px}
-      .dsp-label{font-weight:500}
-      .dsp-val{margin-left:auto;opacity:.75;font-variant-numeric:tabular-nums;font-size:11px}
-      .dsp-check{display:flex;align-items:center;gap:4px;font-size:11px;color:var(--dsw-alias-label-secondary);cursor:pointer}
-      .dsp-check input{accent-color:var(--dsw-alias-brand-primary);width:13px;height:13px;margin:0;cursor:pointer}
-      .dsp-slider{-webkit-appearance:none;appearance:none;width:100%;height:16px;margin:0;padding:0;background:transparent;cursor:pointer}
-      .dsp-slider::-webkit-slider-runnable-track{height:4px;border-radius:2px;background:var(--dsw-alias-border-l2)}
-      .dsp-slider::-webkit-slider-thumb{-webkit-appearance:none;appearance:none;width:14px;height:14px;border-radius:50%;background:var(--dsw-alias-brand-primary);border:none;margin-top:-5px;cursor:pointer}
-      .dsp-slider::-moz-range-track{height:4px;border-radius:2px;background:var(--dsw-alias-border-l2)}
-      .dsp-slider::-moz-range-thumb{width:14px;height:14px;border-radius:50%;background:var(--dsw-alias-brand-primary);border:none;cursor:pointer}
-      .dsp-slider:disabled{opacity:.4;cursor:default}
-      .dsp-actions{display:flex;gap:8px}
-      .dsp-actions button{flex:1;border:1px solid var(--dsw-alias-border-l2);background:transparent;color:var(--dsw-alias-label-primary);border-radius:8px;padding:6px 12px;cursor:pointer;font-size:12px}
-      .dsp-actions button:hover{background:var(--dsw-alias-interactive-bg-hover)}
-      .dsp-actions button.primary{color:var(--dsw-alias-brand-primary);border-color:var(--dsw-alias-brand-primary)}
-      .dsp-status{min-height:16px;font-size:11px;opacity:.8;white-space:pre-wrap;word-break:break-all;color:var(--dsw-alias-label-secondary)}
-    `;
-
-    function TuneIcon() {
-      return React.createElement('svg', { width: 12, height: 12, viewBox: '0 0 12 12', fill: 'none', 'aria-hidden': true },
-        React.createElement('line', { x1: 1.5, y1: 2.5, x2: 10.5, y2: 2.5, stroke: 'currentColor', strokeWidth: 1.2, strokeLinecap: 'round' }),
-        React.createElement('circle', { cx: 7.5, cy: 2.5, r: 1.6, fill: 'currentColor' }),
-        React.createElement('line', { x1: 1.5, y1: 6, x2: 10.5, y2: 6, stroke: 'currentColor', strokeWidth: 1.2, strokeLinecap: 'round' }),
-        React.createElement('circle', { cx: 4, cy: 6, r: 1.6, fill: 'currentColor' }),
-        React.createElement('line', { x1: 1.5, y1: 9.5, x2: 10.5, y2: 9.5, stroke: 'currentColor', strokeWidth: 1.2, strokeLinecap: 'round' }),
-        React.createElement('circle', { cx: 8, cy: 9.5, r: 1.6, fill: 'currentColor' })
-      );
-    }
-
-    function Panel(props) {
-      const api = props.api;
-      const [open, setOpen] = React.useState(false);
-      const [mode, setMode] = React.useState('persist');
-      const [temperature, setTemperature] = React.useState(1.0);
-      const [overrideTemp, setOverrideTemp] = React.useState(false);
-      const [maxTokens, setMaxTokens] = React.useState(4096);
-      const [overrideMax, setOverrideMax] = React.useState(false);
-      const [revision, setRevision] = React.useState(0);
-      const [status, setStatus] = React.useState('');
-      const [loaded, setLoaded] = React.useState(false);
-      const [showHelp, setShowHelp] = React.useState(false);
-
-      const load = React.useCallback(() => {
-        api.settings.describe({}).then((res) => {
-          if (res && res.result && res.result.ok) {
-            const ns = (res.result.value.namespaces || []).find((n) => n.ns === 'sampling-sliders');
-            if (ns) {
-              const v = ns.value || {};
-              if (v.mode === 'hot' || v.mode === 'persist') setMode(v.mode);
-              if (typeof v.temperature === 'number') { setTemperature(v.temperature); setOverrideTemp(true); } else { setOverrideTemp(false); }
-              if (typeof v.maxTokens === 'number') { setMaxTokens(v.maxTokens); setOverrideMax(true); } else { setOverrideMax(false); }
-              setRevision(ns.revision);
-            }
-          }
-          setLoaded(true);
-        }).catch(() => setLoaded(true));
-      }, [api]);
-
-      React.useEffect(() => { load(); }, [load]);
-
-      const apply = () => {
-        setStatus('保存中…');
-        const patch = { mode };
-        if (overrideTemp) patch.temperature = temperature;
-        if (overrideMax) patch.maxTokens = maxTokens;
-        api.settings.update({ ns: 'sampling-sliders', patch, expectedRevision: revision }).then((res) => {
-          if (res && res.result && res.result.ok) {
-            setRevision(res.result.value.revision);
-            setStatus(mode === 'persist'
-              ? '已持久化 ✓ 长期生效'
-              : '已热调 ✓ 本次运行生效（重启后清除）');
-          } else {
-            setStatus('失败：' + (res && res.result && res.result.error ? res.result.error.message : '未知错误'));
-          }
-        }).catch((e) => setStatus('失败：' + String((e && e.message) || e)));
-      };
-
-      const reset = () => {
-        setStatus('重置中…');
-        api.settings.replace({ ns: 'sampling-sliders', section: { mode: 'persist' }, expectedRevision: revision }).then((res) => {
-          if (res && res.result && res.result.ok) {
-            setRevision(res.result.value.revision);
-            setMode('persist');
-            setOverrideTemp(false);
-            setOverrideMax(false);
-            setStatus('已恢复默认（跟随模型默认值）');
-          } else {
-            setStatus('失败：' + (res && res.result && res.result.error ? res.result.error.message : '未知错误'));
-          }
-        }).catch((e) => setStatus('失败：' + String((e && e.message) || e)));
-      };
-
-      const fmt = (n) => Number(n).toFixed(2);
-      const fmtMax = (n) => Number(n).toLocaleString();
-      const anyOverride = overrideTemp || overrideMax;
-
-      return React.createElement('div', { className: 'dsp-anchor' },
-        React.createElement('button', {
-          className: 'dsp-trigger' + (anyOverride ? ' has-override' : ''),
-          title: '模型采样参数（temperature / maxTokens）',
-          onClick: () => setOpen((v) => !v),
-        },
-          React.createElement('span', null, '采样'),
-          React.createElement(TuneIcon, null)
-        ),
-        open ? React.createElement('div', { className: 'dsp-backdrop', onClick: () => setOpen(false) }) : null,
-        open ? React.createElement('div', { className: 'dsp-pop' },
-          React.createElement('div', { className: 'dsp-pop-head' },
-            React.createElement('div', { className: 'dsp-pop-head-left' },
-              React.createElement('span', { className: 'dsp-pop-title' }, '模型采样参数'),
-              React.createElement('button', { className: 'dsp-help', title: '温度 / 最大输出说明', onClick: () => setShowHelp((v) => !v) }, '?')
-            ),
-            React.createElement('div', { className: 'dsp-mode' },
-              React.createElement('button', { className: mode === 'hot' ? 'on' : '', onClick: () => setMode('hot') }, '热调'),
-              React.createElement('button', { className: mode === 'persist' ? 'on' : '', onClick: () => setMode('persist') }, '持久化')
-            )
-          ),
-          showHelp ? React.createElement('div', { className: 'dsp-help-text' }, '温度（temperature，0–2）：控制输出随机性/创造性。\n· 0 = 最确定保守（贪心）\n· 0–0.3：编码 / 事实性任务\n· 0.7–1.0：对话 / 创意写作\n· 1–2：高随机、高发散（DeepSeek 允许到 2）\n· 不勾选「覆盖」= 跟随模型默认。\n\n最大输出（maxTokens）：单次回答最多生成的 token 数，不是上下文长度（DeepSeek 上下文 1M）。') : null,
-          React.createElement('div', { className: 'dsp-divider' }),
-          React.createElement('div', { className: 'dsp-param' },
-            React.createElement('div', { className: 'dsp-param-head' },
-              React.createElement('span', { className: 'dsp-label' }, 'temperature'),
-              React.createElement('label', { className: 'dsp-check' },
-                React.createElement('input', { type: 'checkbox', checked: overrideTemp, onChange: (e) => setOverrideTemp(e.target.checked) }),
-                React.createElement('span', null, '覆盖')
-              ),
-              React.createElement('span', { className: 'dsp-val' }, overrideTemp ? fmt(temperature) : '默认')
-            ),
-            React.createElement('input', {
-              type: 'range', className: 'dsp-slider', min: '0', max: '2', step: '0.05',
-              value: overrideTemp ? temperature : 1.0, disabled: !overrideTemp,
-              onChange: (e) => setTemperature(Number(e.target.value)),
-            })
-          ),
-          React.createElement('div', { className: 'dsp-param' },
-            React.createElement('div', { className: 'dsp-param-head' },
-              React.createElement('span', { className: 'dsp-label' }, 'maxTokens'),
-              React.createElement('label', { className: 'dsp-check' },
-                React.createElement('input', { type: 'checkbox', checked: overrideMax, onChange: (e) => setOverrideMax(e.target.checked) }),
-                React.createElement('span', null, '覆盖')
-              ),
-              React.createElement('span', { className: 'dsp-val' }, overrideMax ? fmtMax(maxTokens) : '默认')
-            ),
-            React.createElement('input', {
-              type: 'range', className: 'dsp-slider', min: '512', max: '256000', step: '1024',
-              value: overrideMax ? maxTokens : 4096, disabled: !overrideMax,
-              onChange: (e) => setMaxTokens(Number(e.target.value)),
-            })
-          ),
-          React.createElement('div', { className: 'dsp-actions' },
-            React.createElement('button', { className: 'primary', onClick: apply }, '应用'),
-            React.createElement('button', { onClick: reset }, '恢复默认')
-          ),
-          React.createElement('div', { className: 'dsp-status' }, loaded ? (status || (mode === 'hot' ? '热调：本次运行生效，重启后清除。' : '持久化：写入配置，长期生效。')) : '读取状态中…')
-        ) : null
-      );
+    /**
+     * 从当前 URL 提取 DSH 会话 ID。
+     * DSH Web 典型 URL: http://127.0.0.1:3080/?token=xxx#/session/session-abc123...
+     */
+    function extractCurrentSessionId() {
+      try {
+        var hash = window.location.hash || ''
+        var m = hash.match(/\/session\/([a-zA-Z0-9_-]+)/)
+        if (m) return m[1]
+      } catch (_) { /* ignore */ }
+      return null
     }
 
     function apply(ctx) {
-      const connection = ctx.get('connection');
-      if (!connection || !connection.api) return;
-      const api = connection.api;
-
-      const tagId = 'dsh-sampling-sliders/styles';
-      if (typeof document !== 'undefined' && !document.querySelector('style[data-plugin-css="' + tagId + '"]')) {
-        const tag = document.createElement('style');
-        tag.setAttribute('data-plugin-css', tagId);
-        tag.textContent = CSS;
-        document.head.appendChild(tag);
+      var settings = ctx.remote && ctx.remote.settings
+      if (!settings) {
+        console.warn('[sampling-sliders] remote.settings unavailable — UI registration skipped')
+        return
       }
 
-      ctx.slots.inject('conversation.input.right', () => ctx.slots.register(
-        { name: 'conversation.input.right', id: 'sampling-params', order: 0 },
-        () => React.createElement(Panel, { api }),
-      ));
+      var origin = window.location.origin
+
+      var api = {
+        describe: function () {
+          return settings.describe().then(function (res) { return res || { ok: false, error: { message: 'no response' } } })
+        },
+        update: function (patch, rev) {
+          return settings.update('sampling-sliders', patch, rev).then(function (res) { return res || { ok: false, error: { message: 'no response' } } })
+        },
+
+        // Hot 模式 per-session HTTP 路由
+        getHot: function (sessionId) {
+          if (!sessionId) return Promise.resolve({ ok: false, error: 'no sessionId' })
+          return fetch(origin + '/api/plugin/sampling-sliders/hot/' + encodeURIComponent(sessionId))
+            .then(function (r) { return r.json().catch(function () { return { ok: false, error: 'invalid json' } }) })
+            .catch(function (e) { return { ok: false, error: (e && e.message) || 'fetch error' } })
+        },
+        setHot: function (sessionId, values) {
+          if (!sessionId) return Promise.resolve({ ok: false, error: 'no sessionId' })
+          return fetch(origin + '/api/plugin/sampling-sliders/hot/' + encodeURIComponent(sessionId), {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(values)
+          }).then(function (r) { return r.json().catch(function () { return { ok: false, error: 'invalid json' } }) })
+            .catch(function (e) { return { ok: false, error: (e && e.message) || 'fetch error' } })
+        },
+        clearHot: function (sessionId) {
+          if (!sessionId) return Promise.resolve({ ok: false, error: 'no sessionId' })
+          return fetch(origin + '/api/plugin/sampling-sliders/hot/' + encodeURIComponent(sessionId), { method: 'DELETE' })
+            .then(function (r) { return r.json().catch(function () { return { ok: false, error: 'invalid json' } }) })
+            .catch(function (e) { return { ok: false, error: (e && e.message) || 'fetch error' } })
+        }
+      }
+
+      // -------------------- 样式 --------------------
+      var css = [
+        '#ss-trigger { display:inline-flex; align-items:center; justify-content:center; width:28px; height:28px; border-radius:6px; cursor:pointer; border:1px solid rgba(255,255,255,.15); background:rgba(255,255,255,.06); color:#bdbdd0; font-size:14px; line-height:1; transition:background .15s,color .15s,border-color .15s; position:relative; }',
+        '#ss-trigger:hover { background:rgba(255,255,255,.12); color:#e8e8ef; border-color:rgba(255,255,255,.25); }',
+        '#ss-trigger.active { background:rgba(141,124,255,.2); border-color:rgba(141,124,255,.4); color:#c8bfff; }',
+        '#ss-trigger .ss-dot { position:absolute; top:3px; right:3px; width:6px; height:6px; border-radius:50%; background:#66c266; display:none; }',
+        '#ss-trigger.has-active .ss-dot { display:block; }',
+        '#ss-popup { position:absolute; bottom:36px; right:0; z-index:9999; display:flex; flex-direction:column; gap:8px; padding:10px 12px; border:1px solid rgba(255,255,255,.15); border-radius:10px; background:rgba(18,20,24,.92); backdrop-filter:blur(8px); box-shadow:0 -8px 24px rgba(0,0,0,.4); font-size:13px; color:#e8e8ef; font-family:var(--dsh-font-family,sans-serif); width:270px; }',
+        '#ss-popup .ss-header { display:flex; justify-content:space-between; align-items:center; }',
+        '#ss-popup .ss-title { font-size:13px; font-weight:600; color:#f0f0f8; }',
+        '#ss-popup .ss-close { cursor:pointer; color:#88889c; font-size:14px; padding:2px 6px; border-radius:4px; }',
+        '#ss-popup .ss-close:hover { color:#e8e8ef; background:rgba(255,255,255,.1); }',
+        '#ss-popup .ss-row { display:flex; flex-direction:column; gap:4px; }',
+        '#ss-popup .ss-row label { display:flex; align-items:center; gap:6px; cursor:pointer; font-size:12px; color:#bdbdd0; }',
+        '#ss-popup .ss-row label:hover { color:#e8e8ef; }',
+        '#ss-popup .ss-row input[type="range"] { width:100%; accent-color:#8d7cff; }',
+        '#ss-popup .ss-value { font-family:monospace; font-size:12px; color:#c0c0d8; min-width:40px; text-align:right; }',
+        '#ss-popup .ss-pill { display:inline-block; font-size:10px; padding:1px 6px; border-radius:10px; margin-left:4px; font-weight:500; }',
+        '#ss-popup .ss-pill.on { background:rgba(102,194,102,.18); color:#66c266; }',
+        '#ss-popup .ss-pill.off { background:rgba(128,128,148,.18); color:#88889c; }',
+        '#ss-popup .ss-radio-row { display:flex; gap:12px; }',
+        '#ss-popup .ss-radio-row label { display:flex; align-items:center; gap:4px; font-size:12px; color:#bdbdd0; cursor:pointer; }',
+        '#ss-popup .ss-radio-row label:hover { color:#e8e8ef; }',
+        '#ss-popup .ss-footer { display:flex; gap:6px; margin-top:2px; }',
+        '#ss-popup .ss-btn { flex:1; padding:6px 10px; border-radius:6px; cursor:pointer; font-size:12px; border:1px solid rgba(255,255,255,.15); background:rgba(255,255,255,.08); color:#e8e8ef; }',
+        '#ss-popup .ss-btn:hover { background:rgba(255,255,255,.14); }',
+        '#ss-popup .ss-btn.primary { background:rgba(141,124,255,.25); border-color:rgba(141,124,255,.4); color:#d5ccff; }',
+        '#ss-popup .ss-btn.primary:hover { background:rgba(141,124,255,.4); }',
+        '#ss-popup .ss-btn.cancel { background:rgba(255,255,255,.04); color:#88889c; }',
+        '#ss-popup .ss-btn.cancel:hover { color:#e8e8ef; }',
+        '#ss-popup .ss-btn[disabled] { opacity:.5; cursor:not-allowed; }',
+        '#ss-popup .ss-status { font-size:11px; padding:2px 6px; border-radius:4px; min-height:14px; }',
+        '#ss-popup .ss-status.saved { color:#66c266; background:rgba(102,194,102,.12); }',
+        '#ss-popup .ss-status.dirty { color:#e29b4a; background:rgba(226,155,74,.12); }',
+        '#ss-popup .ss-status.error { color:#e24a4a; background:rgba(226,74,74,.12); }',
+        '.ss-label-tooltip { position:relative; display:inline-flex; align-items:center; }',
+        '.ss-label-tooltip .ss-tooltip { visibility:hidden; opacity:0; position:absolute; bottom:100%; left:50%; transform:translateX(-50%); margin-bottom:6px; padding:6px 10px; font-size:11px; color:#e8e8ef; background:rgba(30,32,40,.95); border:1px solid rgba(255,255,255,.15); border-radius:6px; white-space:nowrap; z-index:10000; pointer-events:none; transition:opacity .15s,visibility .15s; box-shadow:0 4px 12px rgba(0,0,0,.3); }',
+        '.ss-label-tooltip .ss-tooltip::after { content:""; position:absolute; top:100%; left:50%; margin-left:-4px; border:4px solid transparent; border-top-color:rgba(30,32,40,.95); }',
+        '.ss-label-tooltip:hover .ss-tooltip { visibility:visible; opacity:1; }'
+      ].join('')
+      if (!document.getElementById('dsh-sampling-sliders-styles')) {
+        var s = document.createElement('style')
+        s.id = 'dsh-sampling-sliders-styles'
+        s.textContent = css
+        document.head.appendChild(s)
+      }
+
+      var SamplingSlidersWidget = function () {
+        var open = React.useState(false); var setOpen = open[1]
+        var loaded = React.useState(false); var setLoaded = loaded[1]
+
+        var savedMode = React.useState('persist'); var setSavedMode = savedMode[1]
+        var savedTemperature = React.useState(1); var setSavedTemperature = savedTemperature[1]
+        var savedMaxTokens = React.useState(4096); var setSavedMaxTokens = savedMaxTokens[1]
+        var savedOverrideTemp = React.useState(false); var setSavedOverrideTemp = savedOverrideTemp[1]
+        var savedOverrideMax = React.useState(false); var setSavedOverrideMax = savedOverrideMax[1]
+        var revision = React.useState(0); var setRevision = revision[1]
+
+        var hasHotOverride = React.useState(false); var setHasHotOverride = hasHotOverride[1]
+
+        var mode = React.useState('persist'); var setMode = mode[1]
+        var temperature = React.useState(1); var setTemperature = temperature[1]
+        var maxTokens = React.useState(4096); var setMaxTokens = maxTokens[1]
+        var overrideTemp = React.useState(false); var setOverrideTemp = overrideTemp[1]
+        var overrideMax = React.useState(false); var setOverrideMax = overrideMax[1]
+
+        var status = React.useState(''); var setStatus = status[1]
+        var saving = React.useState(false); var setSaving = saving[1]
+        var errorMsg = React.useState(''); var setErrorMsg = errorMsg[1]
+
+        var sessionIdRef = React.useRef(null)
+
+        var resolveEffective = function (nsValue, hotValue) {
+          if (hotValue && (hotValue.overrideTemperature || hotValue.overrideMaxTokens)) {
+            return { mode: 'hot', overrideTemperature: hotValue.overrideTemperature, temperature: hotValue.temperature, overrideMaxTokens: hotValue.overrideMaxTokens, maxTokens: hotValue.maxTokens }
+          }
+          return { mode: nsValue.mode || 'persist', overrideTemperature: !!nsValue.overrideTemperature, temperature: nsValue.temperature != null ? nsValue.temperature : 1, overrideMaxTokens: !!nsValue.overrideMaxTokens, maxTokens: nsValue.maxTokens != null ? nsValue.maxTokens : 4096 }
+        }
+
+        var load = function () {
+          var sid = extractCurrentSessionId()
+          sessionIdRef.current = sid
+
+          api.describe().then(function (res) {
+            if (!res || !res.ok) {
+              setStatus('error'); setErrorMsg(((res && res.error && res.error.message) || '加载失败')); setLoaded(true); return null
+            }
+            var ns = (res.value && res.value.namespaces || []).find(function (n) { return n.ns === 'sampling-sliders' })
+            var nsValue = ns && ns.value ? ns.value : {}
+            setRevision(ns && ns.revision || 0)
+            return { nsValue: nsValue }
+          }).then(function (intermediate) {
+            if (!intermediate) return
+            if (!sid) {
+              var eff = resolveEffective(intermediate.nsValue, null)
+              setSavedMode(eff.mode); setSavedTemperature(eff.temperature); setSavedMaxTokens(eff.maxTokens)
+              setSavedOverrideTemp(eff.overrideTemperature); setSavedOverrideMax(eff.overrideMaxTokens)
+              setMode(eff.mode); setTemperature(eff.temperature); setMaxTokens(eff.maxTokens)
+              setOverrideTemp(eff.overrideTemperature); setOverrideMax(eff.overrideMaxTokens)
+              setHasHotOverride(false); setStatus(''); setErrorMsg(''); setLoaded(true); return
+            }
+            return api.getHot(sid).then(function (hotRes) {
+              var hotVal = (hotRes && hotRes.ok && hotRes.value) ? hotRes.value : null
+              setHasHotOverride(!!hotVal)
+              var eff = resolveEffective(intermediate.nsValue, hotVal)
+              setSavedMode(eff.mode); setSavedTemperature(eff.temperature); setSavedMaxTokens(eff.maxTokens)
+              setSavedOverrideTemp(eff.overrideTemperature); setSavedOverrideMax(eff.overrideMaxTokens)
+              setMode(eff.mode); setTemperature(eff.temperature); setMaxTokens(eff.maxTokens)
+              setOverrideTemp(eff.overrideTemperature); setOverrideMax(eff.overrideMaxTokens)
+              setStatus(''); setErrorMsg(''); setLoaded(true)
+            })
+          }).catch(function (err) {
+            setStatus('error'); setErrorMsg((err && err.message) || '加载异常'); setLoaded(true)
+          })
+        }
+
+        React.useEffect(function () { load() }, [])
+
+        // 订阅 hashchange —— 切换会话时自动重新加载
+        React.useEffect(function () {
+          var onHashChange = function () {
+            var newSid = extractCurrentSessionId()
+            if (newSid !== sessionIdRef.current) load()
+          }
+          window.addEventListener('hashchange', onHashChange)
+          return function () { window.removeEventListener('hashchange', onHashChange) }
+        }, [])
+
+        var isDirty = (mode[0] !== savedMode) || (temperature[0] !== savedTemperature) || (maxTokens[0] !== savedMaxTokens) || (overrideTemp[0] !== savedOverrideTemp) || (overrideMax[0] !== savedOverrideMax)
+        var hasActiveOverrides = (savedOverrideTemp && !isNaN(savedTemperature)) || (savedOverrideMax && !isNaN(savedMaxTokens))
+
+        var handleSave = function () {
+          if (saving[0]) return
+          setSaving(true); setStatus(''); setErrorMsg('')
+
+          var sid = sessionIdRef.current || extractCurrentSessionId()
+          var hotValues = { overrideTemperature: overrideTemp[0], temperature: temperature[0], overrideMaxTokens: overrideMax[0], maxTokens: maxTokens[0] }
+
+          if (mode[0] === 'hot') {
+            if (!sid) { setStatus('error'); setErrorMsg('Hot 模式需要识别当前会话'); setSaving(false); return }
+            api.setHot(sid, hotValues).then(function (res) {
+              if (res && res.ok) {
+                setSavedMode('hot'); setSavedTemperature(temperature[0]); setSavedMaxTokens(maxTokens[0])
+                setSavedOverrideTemp(overrideTemp[0]); setSavedOverrideMax(overrideMax[0])
+                setHasHotOverride(true)
+                // 顺便把全局 settings 的 mode 复位为 persist
+                return api.update({ mode: 'persist' }, revision[0])
+              } else { throw new Error((res && res.error) || '保存 hot 失败') }
+            }).then(function () { setStatus('saved'); setTimeout(function () { setStatus('') }, 1500) })
+              .catch(function (err) { setStatus('error'); setErrorMsg((err && err.message) || '保存异常') })
+              .finally(function () { setSaving(false) })
+          } else {
+            var persistPatch = { mode: 'persist', overrideTemperature: overrideTemp[0], temperature: temperature[0], overrideMaxTokens: overrideMax[0], maxTokens: maxTokens[0] }
+            Promise.resolve()
+              .then(function () { return sid ? api.clearHot(sid) : null })
+              .then(function () { return api.update(persistPatch, revision[0]) })
+              .then(function (res) {
+                if (res && res.ok) {
+                  var newRev = (res.value && res.value.revision) || revision[0]
+                  setRevision(newRev); setSavedMode('persist'); setSavedTemperature(temperature[0]); setSavedMaxTokens(maxTokens[0])
+                  setSavedOverrideTemp(overrideTemp[0]); setSavedOverrideMax(overrideMax[0])
+                  setHasHotOverride(false); setStatus('saved'); setTimeout(function () { setStatus('') }, 1500)
+                } else { setStatus('error'); setErrorMsg(((res && res.error && res.error.message) || '保存失败')) }
+              })
+              .catch(function (err) { setStatus('error'); setErrorMsg((err && err.message) || '保存异常') })
+              .finally(function () { setSaving(false) })
+          }
+        }
+
+        var handleCancel = function () {
+          setMode(savedMode); setTemperature(savedTemperature); setMaxTokens(savedMaxTokens)
+          setOverrideTemp(savedOverrideTemp); setOverrideMax(savedOverrideMax)
+          setStatus(''); setErrorMsg(''); setOpen(false)
+        }
+
+        React.useEffect(function () {
+          if (!open[0]) return
+          var onKey = function (e) { if (e.key === 'Escape') handleCancel() }
+          window.addEventListener('keydown', onKey)
+          return function () { window.removeEventListener('keydown', onKey) }
+        }, [open[0]])
+
+        React.useEffect(function () {
+          if (!open[0]) return
+          var onDocClick = function (e) {
+            var popup = document.getElementById('ss-popup')
+            var trigger = document.getElementById('ss-trigger')
+            if (popup && !popup.contains(e.target) && trigger && !trigger.contains(e.target)) handleCancel()
+          }
+          var id = setTimeout(function () { document.addEventListener('mousedown', onDocClick) }, 0)
+          return function () { clearTimeout(id); document.removeEventListener('mousedown', onDocClick) }
+        }, [open[0]])
+
+        return React.createElement('div', { style: { position: 'relative', display: 'inline-block' }, onClick: function () { setOpen(!open[0]) } }, [
+          React.createElement('button', {
+            id: 'ss-trigger',
+            className: 'ss-trigger' + (open[0] ? ' active' : '') + (hasActiveOverrides ? ' has-active' : ''),
+            type: 'button', title: '采样参数（Temperature / MaxTokens）'
+          }, [
+            React.createElement('svg', { width: 14, height: 14, viewBox: '0 0 24 24', fill: 'none', stroke: 'currentColor', strokeWidth: 2, strokeLinecap: 'round', strokeLinejoin: 'round', style: { display: 'block' } }, [
+              React.createElement('line', { x1: '4', y1: '21', x2: '4', y2: '14' }),
+              React.createElement('line', { x1: '4', y1: '10', x2: '4', y2: '3' }),
+              React.createElement('line', { x1: '12', y1: '21', x2: '12', y2: '12' }),
+              React.createElement('line', { x1: '12', y1: '8', x2: '12', y2: '3' }),
+              React.createElement('line', { x1: '20', y1: '21', x2: '20', y2: '16' }),
+              React.createElement('line', { x1: '20', y1: '12', x2: '20', y2: '3' }),
+              React.createElement('line', { x1: '1', y1: '14', x2: '7', y2: '14' }),
+              React.createElement('line', { x1: '9', y1: '8', x2: '15', y2: '8' }),
+              React.createElement('line', { x1: '17', y1: '16', x2: '23', y2: '16' })
+            ]),
+            React.createElement('span', { className: 'ss-dot' })
+          ]),
+
+          open[0] && React.createElement('div', { id: 'ss-popup', onClick: function (e) { e.stopPropagation() } }, [
+            React.createElement('div', { className: 'ss-header' }, [
+              React.createElement('span', { className: 'ss-title' }, '采样参数'),
+              React.createElement('span', { className: 'ss-close', role: 'button', title: '关闭（ESC）', onClick: function (e) { e.stopPropagation(); handleCancel() } }, '✕')
+            ]),
+
+            hasHotOverride[0] && React.createElement('div', { style: { fontSize: 11, color: '#e29b4a', background: 'rgba(226,155,74,0.12)', padding: '2px 6px', borderRadius: 4 } },
+              '当前会话处于 Hot 模式：退出会话后自动清除'
+            ),
+
+            React.createElement('div', { className: 'ss-row' },
+              React.createElement('label', {},
+                React.createElement('input', { type: 'checkbox', checked: overrideTemp[0], onChange: function (e) { setOverrideTemp(e.target.checked) } }),
+                React.createElement('span', { className: 'ss-label-tooltip' }, ['Temperature', React.createElement('span', { className: 'ss-tooltip' }, '控制生成文本的随机性。值越高输出越多样。')]),
+                React.createElement('span', { className: 'ss-pill ' + (overrideTemp[0] ? 'on' : 'off') }, overrideTemp[0] ? 'on' : 'off')
+              ),
+              overrideTemp[0] && React.createElement('input', { type: 'range', min: 0, max: 2, step: 0.05, value: temperature[0], onChange: function (e) { setTemperature(parseFloat(e.target.value)) } }),
+              overrideTemp[0] && React.createElement('div', { className: 'ss-value' }, temperature[0].toFixed(2))
+            ),
+
+            React.createElement('div', { className: 'ss-row' },
+              React.createElement('label', {},
+                React.createElement('input', { type: 'checkbox', checked: overrideMax[0], onChange: function (e) { setOverrideMax(e.target.checked) } }),
+                React.createElement('span', { className: 'ss-label-tooltip' }, ['Max tokens', React.createElement('span', { className: 'ss-tooltip' }, '单次回复最多生成的 token 数上限。')]),
+                React.createElement('span', { className: 'ss-pill ' + (overrideMax[0] ? 'on' : 'off') }, overrideMax[0] ? 'on' : 'off')
+              ),
+              overrideMax[0] && React.createElement('input', { type: 'range', min: 512, max: 256000, step: 1024, value: maxTokens[0], onChange: function (e) { setMaxTokens(parseInt(e.target.value, 10)) } }),
+              overrideMax[0] && React.createElement('div', { className: 'ss-value' }, maxTokens[0].toLocaleString())
+            ),
+
+            React.createElement('div', { className: 'ss-row' },
+              React.createElement('div', { className: 'ss-radio-row' },
+                React.createElement('label', {},
+                  React.createElement('input', { type: 'radio', name: 'ss-mode', checked: mode[0] === 'persist', onChange: function () { setMode('persist') } }),
+                  React.createElement('span', { className: 'ss-label-tooltip' }, ['Persist', React.createElement('span', { className: 'ss-tooltip' }, '覆盖值保存到配置，后续所有会话持续生效。')])
+                ),
+                React.createElement('label', {},
+                  React.createElement('input', { type: 'radio', name: 'ss-mode', checked: mode[0] === 'hot', onChange: function () { setMode('hot') } }),
+                  React.createElement('span', { className: 'ss-label-tooltip' }, ['Hot', React.createElement('span', { className: 'ss-tooltip' }, '仅当前会话生效；切换会话或关闭后自动清除。')])
+                )
+              )
+            ),
+
+            React.createElement('div', { className: 'ss-status ' + status[0] },
+              status[0] === 'saved' ? '✓ 已保存' : status[0] === 'error' ? ('✗ ' + errorMsg[0]) : ''
+            ),
+
+            React.createElement('div', { className: 'ss-footer' },
+              React.createElement('button', { className: 'ss-btn primary', disabled: !isDirty || saving[0], onClick: handleSave, type: 'button' }, saving[0] ? '保存中…' : '保存'),
+              React.createElement('button', { className: 'ss-btn cancel', disabled: saving[0], onClick: handleCancel, type: 'button' }, '取消')
+            )
+          ])
+        ])
+      }
+
+      ctx.slots.inject('conversation.input.right', function () {
+        return ctx.slots.register({ name: 'conversation.input.right', id: 'sampling-params', order: 0 }, function () {
+          return React.createElement(SamplingSlidersWidget)
+        })
+      })
     }
 
-    exports.apply = apply;
-    exports.inject = inject;
-    return module.exports;
+    exports.inject = ['slots', 'remote', 'remote.settings']
+    exports.apply = apply
+    return module.exports
   }
-});
+})
