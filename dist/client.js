@@ -6,7 +6,7 @@ window.__ModuleLoader__.load({
     Object.defineProperty(exports, Symbol.toStringTag, { value: "Module" });
     const React = require("react");
 
-    const inject = ["slots", "connection"];
+    const inject = ["slots"];
 
     const CSS = `
       .dsp-anchor{position:relative;display:inline-flex;align-items:center}
@@ -43,37 +43,7 @@ window.__ModuleLoader__.load({
       .dsp-actions button:hover{background:var(--dsw-alias-interactive-bg-hover)}
       .dsp-actions button.primary{color:var(--dsw-alias-brand-primary);border-color:var(--dsw-alias-brand-primary)}
       .dsp-status{min-height:16px;font-size:11px;opacity:.8;white-space:pre-wrap;word-break:break-all;color:var(--dsw-alias-label-secondary)}
-      .dsp-hot-badge{display:inline-block;font-size:10px;padding:1px 6px;border-radius:10px;background:rgba(226,155,74,.18);color:#e29b4a;margin-left:6px;font-weight:500}
     `;
-
-    // --- per-session hot mode helpers (v0.4.0 fix) ---
-    function extractSessionId() {
-      try {
-        const hash = window.location.hash || '';
-        const m = hash.match(/\/session\/([a-zA-Z0-9_-]+)/);
-        if (m) return m[1];
-      } catch (_) {}
-      return null;
-    }
-    function hotUrl(sessionId) {
-      return window.location.origin + '/api/plugin/sampling-sliders/hot/' + encodeURIComponent(sessionId);
-    }
-    const hotApi = {
-      get: (sid) => {
-        if (!sid) return Promise.resolve(null);
-        return fetch(hotUrl(sid)).then(r => r.json().catch(() => null)).then(j => (j && j.ok && j.value) || null).catch(() => null);
-      },
-      set: (sid, vals) => {
-        if (!sid) return Promise.resolve({ ok: false, error: 'no sessionId' });
-        return fetch(hotUrl(sid), {
-          method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(vals)
-        }).then(r => r.json().catch(() => ({ ok: false }))).catch(e => ({ ok: false, error: String(e) }));
-      },
-      clear: (sid) => {
-        if (!sid) return Promise.resolve({ ok: false });
-        return fetch(hotUrl(sid), { method: 'DELETE' }).then(r => r.json().catch(() => ({ ok: false }))).catch(() => ({ ok: false }));
-      }
-    };
 
     function TuneIcon() {
       return React.createElement('svg', { width: 12, height: 12, viewBox: '0 0 12 12', fill: 'none', 'aria-hidden': true },
@@ -86,8 +56,29 @@ window.__ModuleLoader__.load({
       );
     }
 
+    // Settings RPC 助手：走 /api/<endpoint> + client-request 信封
+    // 已实测格式(2026-10-24)：endpoint 用斜杠形式(settings/describe、settings/mutate)；
+    // payload 必须包一层 { args: {...} }；settings/mutate 的参数是 ns + ops([{op,path,value}])，无 revision
+    function rpcId() {
+      if (typeof crypto !== 'undefined' && crypto.randomUUID) return crypto.randomUUID();
+      return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, (c) => {
+        const r = (Math.random() * 16) | 0;
+        return (c === 'x' ? r : (r & 0x3) | 0x8).toString(16);
+      });
+    }
+    function settingsRpc(endpoint, args) {
+      const id = rpcId();
+      return fetch('/api/' + endpoint, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ type: 'client-request', rpcId: id, method: endpoint, payload: { args: args } })
+      }).then((r) => r.json()).then((full) => {
+        if (full && full.rpcId !== id) throw new Error('rpcId mismatch for ' + endpoint);
+        return full ? full.result : null;
+      });
+    }
+
     function Panel(props) {
-      const api = props.api;
       const [open, setOpen] = React.useState(false);
       const [mode, setMode] = React.useState('persist');
       const [temperature, setTemperature] = React.useState(1.0);
@@ -98,112 +89,61 @@ window.__ModuleLoader__.load({
       const [status, setStatus] = React.useState('');
       const [loaded, setLoaded] = React.useState(false);
       const [showHelp, setShowHelp] = React.useState(false);
-      const [hasHot, setHasHot] = React.useState(false);
 
       const load = React.useCallback(() => {
-        const sid = extractSessionId();
-        api.settings.describe({}).then((res) => {
-          // Step 1: 读全局 settings（persist 来源 + mode）
-          let nsValue = {};
-          let rev = 0;
-          if (res && res.result && res.result.ok) {
-            const ns = (res.result.value.namespaces || []).find((n) => n.ns === 'sampling-sliders');
-            if (ns) { nsValue = ns.value || {}; rev = ns.revision || 0; }
-          }
-          setRevision(rev);
-
-          // Step 2: 查当前 session 的 hot override（如果有就优先用）
-          return hotApi.get(sid).then((hotVal) => {
-            const useHot = hotVal && (hotVal.overrideTemperature || hotVal.overrideMaxTokens);
-            setHasHot(!!useHot);
-
-            if (useHot) {
-              // Hot override 优先
-              setMode('hot');
-              setTemperature(typeof hotVal.temperature === 'number' ? hotVal.temperature : 1.0);
-              setOverrideTemp(!!hotVal.overrideTemperature);
-              setMaxTokens(typeof hotVal.maxTokens === 'number' ? hotVal.maxTokens : 4096);
-              setOverrideMax(!!hotVal.overrideMaxTokens);
-            } else {
-              // Fallback 到全局 persist 值
-              if (nsValue.mode === 'hot' || nsValue.mode === 'persist') setMode(nsValue.mode);
-              if (typeof nsValue.temperature === 'number') { setTemperature(nsValue.temperature); setOverrideTemp(true); } else { setOverrideTemp(false); }
-              if (typeof nsValue.maxTokens === 'number') { setMaxTokens(nsValue.maxTokens); setOverrideMax(true); } else { setOverrideMax(false); }
+        settingsRpc('settings/describe', {}).then((res) => {
+          if (res && res.ok) {
+            const ns = (res.value.namespaces || []).find((n) => n.ns === 'sampling-sliders');
+            if (ns) {
+              const v = ns.value || {};
+              if (v.mode === 'hot' || v.mode === 'persist') setMode(v.mode);
+              if (typeof v.temperature === 'number') { setTemperature(v.temperature); setOverrideTemp(true); } else { setOverrideTemp(false); }
+              if (typeof v.maxTokens === 'number') { setMaxTokens(v.maxTokens); setOverrideMax(true); } else { setOverrideMax(false); }
+              setRevision(ns.revision);
             }
-            setLoaded(true);
-          });
+          }
+          setLoaded(true);
         }).catch(() => setLoaded(true));
-      }, [api]);
+      }, []);
 
       React.useEffect(() => { load(); }, [load]);
 
-      // 订阅 hashchange——切换会话时自动重新加载
-      React.useEffect(() => {
-        const onHash = () => load();
-        window.addEventListener('hashchange', onHash);
-        return () => window.removeEventListener('hashchange', onHash);
-      }, [load]);
-
       const apply = () => {
         setStatus('保存中…');
-        const sid = extractSessionId();
-
-        if (mode === 'hot') {
-          // Hot 模式：写入 per-session HTTP 路由
-          if (!sid) { setStatus('失败：无法识别当前会话'); return; }
-          const vals = {
-            overrideTemperature: overrideTemp,
-            temperature: temperature,
-            overrideMaxTokens: overrideMax,
-            maxTokens: maxTokens
-          };
-          hotApi.set(sid, vals).then((res) => {
-            if (res && res.ok) {
-              setHasHot(true);
-              // 同时把全局 settings 的 mode 复位为 persist（防残留到新会话）
-              api.settings.update({ ns: 'sampling-sliders', patch: { mode: 'persist' }, expectedRevision: revision }).catch(() => {});
-              setStatus('已热调 ✓ 仅当前会话生效');
-            } else {
-              setStatus('失败：' + (res && res.error || 'HTTP 路由不可用'));
-            }
-          }).catch((e) => setStatus('失败：' + String(e)));
-        } else {
-          // Persist 模式：写入全局 settings
-          const patch = { mode: 'persist' };
-          if (overrideTemp) patch.temperature = temperature;
-          if (overrideMax) patch.maxTokens = maxTokens;
-          // 同时清除该 session 的 hot override（如果有的话）
-          Promise.all([
-            sid ? hotApi.clear(sid) : Promise.resolve(),
-            api.settings.update({ ns: 'sampling-sliders', patch, expectedRevision: revision })
-          ]).then(([, res]) => {
-            if (res && res.result && res.result.ok) {
-              setRevision(res.result.value.revision);
-              setHasHot(false);
-              setStatus('已持久化 ✓ 长期生效');
-            } else {
-              setStatus('失败：' + (res && res.result && res.result.error ? res.result.error.message : '未知错误'));
-            }
-          }).catch((e) => setStatus('失败：' + String((e && e.message) || e)));
-        }
+        // 官方 settings.mutate(namespace, ops, revision)，ops 为 [{op,path,value}]
+        const ops = [{ op: 'set', path: ['mode'], value: mode }];
+        if (overrideTemp) ops.push({ op: 'set', path: ['temperature'], value: temperature });
+        else ops.push({ op: 'unset', path: ['temperature'] });
+        if (overrideMax) ops.push({ op: 'set', path: ['maxTokens'], value: maxTokens });
+        else ops.push({ op: 'unset', path: ['maxTokens'] });
+        settingsRpc('settings/mutate', { ns: 'sampling-sliders', ops: ops }).then((res) => {
+          if (res && res.ok) {
+            setRevision(res.value.revision);
+            setStatus(mode === 'persist'
+              ? '已持久化 ✓ 长期生效'
+              : '已热调 ✓ 本次运行生效（重启后清除）');
+          } else {
+            setStatus('失败：' + (res && res.error ? res.error.message : '未知错误'));
+          }
+        }).catch((e) => setStatus('失败：' + String((e && e.message) || e)));
       };
 
       const reset = () => {
         setStatus('重置中…');
-        const sid = extractSessionId();
-        Promise.all([
-          sid ? hotApi.clear(sid) : Promise.resolve(),
-          api.settings.replace({ ns: 'sampling-sliders', section: { mode: 'persist' }, expectedRevision: revision })
-        ]).then(([, res]) => {
-          if (res && res.result && res.result.ok) {
-            setRevision(res.result.value.revision);
+        const ops = [
+          { op: 'unset', path: ['temperature'] },
+          { op: 'unset', path: ['maxTokens'] },
+          { op: 'set', path: ['mode'], value: 'persist' }
+        ];
+        settingsRpc('settings/mutate', { ns: 'sampling-sliders', ops: ops }).then((res) => {
+          if (res && res.ok) {
+            setRevision(res.value.revision);
             setMode('persist');
             setOverrideTemp(false);
             setOverrideMax(false);
-            setHasHot(false);
             setStatus('已恢复默认（跟随模型默认值）');
           } else {
-            setStatus('失败：' + (res && res.result && res.result.error ? res.result.error.message : '未知错误'));
+            setStatus('失败：' + (res && res.error ? res.error.message : '未知错误'));
           }
         }).catch((e) => setStatus('失败：' + String((e && e.message) || e)));
       };
@@ -225,18 +165,15 @@ window.__ModuleLoader__.load({
         open ? React.createElement('div', { className: 'dsp-pop' },
           React.createElement('div', { className: 'dsp-pop-head' },
             React.createElement('div', { className: 'dsp-pop-head-left' },
-              React.createElement('span', { className: 'dsp-pop-title' },
-                '模型采样参数',
-                hasHot ? React.createElement('span', { className: 'dsp-hot-badge' }, 'Hot会话') : null
-              ),
+              React.createElement('span', { className: 'dsp-pop-title' }, '模型采样参数'),
               React.createElement('button', { className: 'dsp-help', title: '温度 / 最大输出说明', onClick: () => setShowHelp((v) => !v) }, '?')
             ),
             React.createElement('div', { className: 'dsp-mode' },
-              React.createElement('button', { className: mode === 'hot' ? 'on' : '', onClick: () => setMode('hot'), title: '仅当前会话生效' }, '热调'),
-              React.createElement('button', { className: mode === 'persist' ? 'on' : '', onClick: () => setMode('persist'), title: '所有会话长期生效' }, '持久化')
+              React.createElement('button', { className: mode === 'hot' ? 'on' : '', onClick: () => setMode('hot') }, '热调'),
+              React.createElement('button', { className: mode === 'persist' ? 'on' : '', onClick: () => setMode('persist') }, '持久化')
             )
           ),
-          showHelp ? React.createElement('div', { className: 'dsp-help-text' }, '温度（temperature，0–2）：控制输出随机性/创造性。\n· 0 = 最确定保守（贪心）\n· 0–0.3：编码 / 事实性任务\n· 0.7–1.0：对话 / 创意写作\n· 1–2：高随机、高发散（DeepSeek 允许到 2）\n· 不勾选「覆盖」= 跟随模型默认。\n\n最大输出（maxTokens）：单次回答最多生成的 token 数，不是上下文长度（DeepSeek 上下文 1M）。\n\n热调 vs 持久化：\n· 热调 = 仅当前会话生效；切会话 / 关会话自动清除\n· 持久化 = 写入配置，所有会话共享，长期生效') : null,
+          showHelp ? React.createElement('div', { className: 'dsp-help-text' }, '温度（temperature，0–2）：控制输出随机性/创造性。\n· 0 = 最确定保守（贪心）\n· 0–0.3：编码 / 事实性任务\n· 0.7–1.0：对话 / 创意写作\n· 1–2：高随机、高发散（DeepSeek 允许到 2）\n· 不勾选「覆盖」= 跟随模型默认。\n\n最大输出（maxTokens）：单次回答最多生成的 token 数，不是上下文长度（DeepSeek 上下文 1M）。') : null,
           React.createElement('div', { className: 'dsp-divider' }),
           React.createElement('div', { className: 'dsp-param' },
             React.createElement('div', { className: 'dsp-param-head' },
@@ -272,16 +209,12 @@ window.__ModuleLoader__.load({
             React.createElement('button', { className: 'primary', onClick: apply }, '应用'),
             React.createElement('button', { onClick: reset }, '恢复默认')
           ),
-          React.createElement('div', { className: 'dsp-status' }, loaded ? (status || (mode === 'hot' ? '热调：仅当前会话生效，切会话后清除。' : '持久化：写入配置，长期生效。')) : '读取状态中…')
+          React.createElement('div', { className: 'dsp-status' }, loaded ? (status || (mode === 'hot' ? '热调：本次运行生效，重启后清除。' : '持久化：写入配置，长期生效。')) : '读取状态中…')
         ) : null
       );
     }
 
     function apply(ctx) {
-      const connection = ctx.get('connection');
-      if (!connection || !connection.api) return;
-      const api = connection.api;
-
       const tagId = 'dsh-sampling-sliders/styles';
       if (typeof document !== 'undefined' && !document.querySelector('style[data-plugin-css="' + tagId + '"]')) {
         const tag = document.createElement('style');
@@ -290,14 +223,20 @@ window.__ModuleLoader__.load({
         document.head.appendChild(tag);
       }
 
-      ctx.slots.inject('conversation.input.right', () => ctx.slots.register(
-        { name: 'conversation.input.right', id: 'sampling-params', order: 0 },
-        () => React.createElement(Panel, { api }),
-      ));
+      if (typeof ctx.inject !== 'function') return;
+
+      ctx.inject(['slots'], function (scope) {
+        scope.slots.inject('conversation.input.right', function () {
+          return scope.slots.register(
+            { name: 'conversation.input.right', id: 'sampling-params', order: 0 },
+            function () { return React.createElement(Panel, null); },
+          );
+        });
+      });
     }
 
     exports.apply = apply;
-    exports.inject = inject;
+    exports.inject = ["slots"];
     return module.exports;
   }
 });
