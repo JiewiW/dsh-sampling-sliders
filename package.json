@@ -1,6 +1,6 @@
 {
   "name": "dsh-sampling-sliders",
-  "version": "0.2.0-adapted",
+  "version": "0.3.0",
   "description": "DSH conversation slot plugin exposing live temperature / maxTokens sliders. Adapted for DSH 0.2.0-rc.2.",
   "type": "module",
   "main": "./dist/index.js",
