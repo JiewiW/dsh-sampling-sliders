@@ -101,10 +101,9 @@ function registerHotRoutes(ctx) {
   }
 
   const PREFIX = '/api/plugin/sampling-sliders/hot'
-  const disposeAll = []
 
-  // POST/PUT 写入 hot overrides，DELETE 清除
-  disposeAll.push(webServer.register({
+  // 合并 GET / POST(PUT) / DELETE 到同一条 prefix handler，避免重复注册同 PREFIX 被先到者吞掉
+  const dispose = webServer.register({
     kind: 'prefix',
     path: PREFIX,
     handler: async (req, res) => {
@@ -113,6 +112,10 @@ function registerHotRoutes(ctx) {
         const sessionId = extractSessionId(url.pathname)
         if (!sessionId) return json(res, 400, { ok: false, error: 'sessionId required' })
 
+        if (req.method === 'GET') {
+          const hot = hotOverrides.get(sessionId)
+          return json(res, 200, { ok: true, value: hot ?? null })
+        }
         if (req.method === 'DELETE') {
           hotOverrides.delete(sessionId)
           return json(res, 200, { ok: true, cleared: true })
@@ -133,26 +136,9 @@ function registerHotRoutes(ctx) {
         return json(res, 400, { ok: false, error: err instanceof Error ? err.message : String(err) })
       }
     }
-  }))
+  })
 
-  // GET 读取当前 hot overrides
-  disposeAll.push(webServer.register({
-    kind: 'prefix',
-    path: PREFIX,
-    handler: (req, res) => {
-      try {
-        const url = new URL(req.url ?? '/', 'http://localhost')
-        const sessionId = extractSessionId(url.pathname)
-        if (!sessionId) return json(res, 400, { ok: false, error: 'sessionId required' })
-        const hot = hotOverrides.get(sessionId)
-        return json(res, 200, { ok: true, value: hot ?? null })
-      } catch (err) {
-        return json(res, 400, { ok: false, error: err instanceof Error ? err.message : String(err) })
-      }
-    }
-  }))
-
-  return () => disposeAll.forEach(d => { try { d() } catch {} })
+  return () => { try { dispose() } catch {} }
 }
 
 export function apply(ctx, config = {}) {
