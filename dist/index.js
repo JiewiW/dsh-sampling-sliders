@@ -10,7 +10,7 @@
 import z from '@deepseek-ai/schemastery'
 
 export const name = 'sampling-sliders'
-export const inject = []
+export const inject = ['webServer']
 
 const MODE_PERSIST = 'persist'
 const MODE_HOT = 'hot'
