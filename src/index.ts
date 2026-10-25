@@ -5,6 +5,8 @@
 //   - hot 模式：写入 per-session 内存 Map（key=sessionId），仅当前会话生效
 //     会话销毁时自动清除，不再污染其他会话
 //   - 启动时若全局 Config.mode='hot'，复位为 persist（防止残留）
+//   - client 端拿不到 sessionId 时，新增 GET /api/plugin/sampling-sliders/currentSession
+//     让 host 端从最近活跃 agent 请求里取出 sessionId 返回
 //
 // 0.2.x 配置通路：插件导出 Config schema + volatile 字段；mode 改动触发 profile 重载。
 // 客户端通过 HTTP 路由 /api/plugin/sampling-sliders/hot/:sessionId 读写 per-session hot 值。
@@ -35,6 +37,9 @@ const hotOverrides = new Map<string, {
   overrideMaxTokens: boolean
   maxTokens: number
 }>()
+
+/** 最近活跃的 sessionId，由任何一条 agent/request 刷新；client 端拿不到时调 currentSession 路由。 */
+let recentSessionId: string | null = null
 
 function unref(value: any, fallback: any) {
   if (value !== null && typeof value === 'object' && typeof value.get === 'function') {
@@ -99,7 +104,7 @@ function extractSessionId(pathname: string): string | null {
   return last
 }
 
-/** 注册 HTTP 路由给 Client 端调用 per-session hot overrides。 */
+/** 注册 HTTP 路由给 Client 端调用 per-session hot overrides + currentSession 查询。 */
 function registerHotRoutes(ctx: any): () => void {
   const webServer = ctx.webServer
   if (!webServer) {
@@ -107,12 +112,13 @@ function registerHotRoutes(ctx: any): () => void {
     return () => {}
   }
 
-  const PREFIX = '/api/plugin/sampling-sliders/hot'
+  const HOT_PREFIX = '/api/plugin/sampling-sliders/hot'
+  const SESSION_ROUTE = '/api/plugin/sampling-sliders/currentSession'
 
-  // 合并 GET / POST(PUT) / DELETE 到同一条 prefix handler，避免重复注册同 PREFIX 被先到者吞掉
-  const dispose = webServer.register({
+  // 主路由：GET/POST/PUT/DELETE per-session hot
+  const disposeHot = webServer.register({
     kind: 'prefix',
-    path: PREFIX,
+    path: HOT_PREFIX,
     handler: async (req: any, res: any) => {
       try {
         const url = new URL(req.url ?? '/', 'http://localhost')
@@ -145,7 +151,17 @@ function registerHotRoutes(ctx: any): () => void {
     }
   })
 
-  return () => { try { dispose() } catch {} }
+  // 辅助路由：返回最近活跃的 sessionId，client 端拿不到时用
+  const disposeSession = webServer.register({
+    kind: 'prefix',
+    path: SESSION_ROUTE,
+    handler: (req: any, res: any) => {
+      if (req.method !== 'GET') return json(res, 405, { ok: false, error: 'method not allowed' })
+      return json(res, 200, { ok: true, sessionId: recentSessionId })
+    }
+  })
+
+  return () => { try { disposeHot(); disposeSession() } catch {} }
 }
 
 export function apply(ctx: Context, config: Record<string, unknown> = {}) {
@@ -169,6 +185,9 @@ export function apply(ctx: Context, config: Record<string, unknown> = {}) {
 
     const sessionId = payload && payload.agent && payload.agent.session && payload.agent.session.id
     const out: any = { ...proposed }
+
+    // 刷新最近活跃 sessionId，供 client 端 currentSession 路由查询
+    if (sessionId) recentSessionId = sessionId
 
     const hot = sessionId ? hotOverrides.get(sessionId) : undefined
     if (hot) {
@@ -197,5 +216,5 @@ export function apply(ctx: Context, config: Record<string, unknown> = {}) {
     }
   })
 
-  console.log('[sampling-sliders] agent/request interceptor active (0.2.x + per-session hot)')
+  console.log('[sampling-sliders] agent/request interceptor active (0.2.x + per-session hot + currentSession route)')
 }
